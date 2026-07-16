@@ -60,6 +60,9 @@ async function route(
       case Endpoint.OnAppInstall:
         rsp = await routeAppInstall()
         break
+      case Endpoint.OnPostSubmit:
+        rsp = await onPostSubmit()
+        break
       default:
         endpoint satisfies never
         rsp = {error: 'not found', status: 404}
@@ -94,6 +97,11 @@ async function routeMenuNewPost(): Promise<UiResponse> {
 async function routeAppInstall(): Promise<TriggerResponse> {
   await reddit.submitCustomPost({title: context.appSlug})
   return {}
+}
+
+async function onPostSubmit(): Promise<TriggerResponse> {
+  console.log('new post submitted!!!')
+  return {'test': 'test'}
 }
 
 async function readJson<T>(reqMsg: IncomingMessage): Promise<T> {
