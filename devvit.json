@@ -12,6 +12,14 @@
     }
   },
   "server": {},
+  "permissions": {
+    "http": {
+      "enable": true,
+      "domains": [
+        "contextguard-one.vercel.app"
+      ]
+    }
+  },
   "menu": {
     "items": [
       {

@@ -1,6 +1,8 @@
 import {once} from 'node:events'
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {context, reddit} from '@devvit/web/server'
+import {T3} from '@devvit/shared-types/tid.js'
+
 import type {
   PartialJsonValue,
   TriggerResponse,
@@ -15,6 +17,9 @@ import {
   type IncCounterRsp,
 } from '../shared/api.ts'
 import {dbGetCounter, dbIncCounter} from './db.ts'
+import { resolve } from 'node:path'
+import { count } from 'node:console'
+import type { stringify } from 'node:querystring'
 
 type AnyRsp =
   | GetCounterRsp
@@ -61,7 +66,7 @@ async function route(
         rsp = await routeAppInstall()
         break
       case Endpoint.OnPostSubmit:
-        rsp = await onPostSubmit()
+        rsp = await onPostSubmit(reqMsg)
         break
       default:
         endpoint satisfies never
@@ -99,9 +104,61 @@ async function routeAppInstall(): Promise<TriggerResponse> {
   return {}
 }
 
-async function onPostSubmit(): Promise<TriggerResponse> {
-  console.log('new post submitted!!!')
-  return {'test': 'test'}
+async function delayTime(ms: number){
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function onPostSubmit(reqMsg: IncomingMessage): Promise<TriggerResponse> {
+	console.log('new post submitted!!!!')
+	const req = await readJson(reqMsg)
+	let postId = (req as any).post?.id
+  console.log(postId, 'this is new post id')
+  // const postId = 't3_1v1413l'
+	// console.log(postId, 'this is the post id!')
+  /*
+  fetch post metadata
+  if securemedia is missing:
+  - wait 3 seconds, log the count down
+  - fetch post metadata again
+  - check if securemedia is still missing or if its there
+  */
+  let totalTime = 18
+  let countDown = 3
+  let postMetaInfo = await reddit.getPostById(postId)
+  while (!postMetaInfo.secureMedia && totalTime > 0){
+    console.log(`secureMedia not loaded, waiting ${countDown} seconds...`)
+    await delayTime(1000)
+    countDown -= 1
+    totalTime -= 1
+    if (countDown == 0){
+      countDown = 3
+      postMetaInfo = await reddit.getPostById(postId)
+      console.log(`SecureMedia still not loaded, resetting timer to 3 seconds...`)
+    }
+  }
+  console.log(postMetaInfo.secureMedia, 'this is the secure media info, hopefully not undefined....')
+  const HLSlink = postMetaInfo.secureMedia?.redditVideo?.hlsUrl ?? 'no hls url...'
+	if (!postId) throw new Error("Run on a post.");
+  const contextGuardAPI = 'https://contextguard-one.vercel.app/api/GenerateVerdict'
+  const response = await fetch(contextGuardAPI, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'url': HLSlink })
+  })
+
+  const res = await response.json() as { url?: String }
+  const link = res.url?? 'no url'
+
+	const pinned = await reddit.submitComment({
+		id: postId,
+		//text: JSON.stringify(postMetaInfo, null, 2),
+    text: JSON.stringify({link}),
+		runAs: "APP",
+	});
+	await pinned.distinguish(true); // sticky mod comment (maps to PRAW distinguish(True))
+	return {'test': 'test'}
 }
 
 async function readJson<T>(reqMsg: IncomingMessage): Promise<T> {
