@@ -139,24 +139,20 @@ async function onPostSubmit(reqMsg: IncomingMessage): Promise<TriggerResponse> {
     }
   }
   console.log(postMetaInfo.secureMedia, 'this is the secure media info, hopefully not undefined....')
-  const HLSlink = postMetaInfo.secureMedia?.redditVideo?.hlsUrl ?? 'no hls url...'
-	if (!postId) throw new Error("Run on a post.");
-  const contextGuardAPI = 'https://contextguard-one.vercel.app/api/GenerateVerdict'
-  const response = await fetch(contextGuardAPI, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 'url': HLSlink })
+  const fallBackURL = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
+
+  const pinned = await reddit.submitComment({
+    id: postId,
+    text: JSON.stringify({fallBackURL}),
+    runAs: 'APP',
   })
 
-  const res = await response.json() as { url?: String }
-  const link = res.url?? 'no url'
-
-	const pinned = await reddit.submitComment({
-		id: postId,
-		//text: JSON.stringify(postMetaInfo, null, 2),
-    text: JSON.stringify({link}),
-		runAs: "APP",
-	});
+	// const pinned = await reddit.submitComment({
+	// 	id: postId,
+	// 	//text: JSON.stringify(postMetaInfo, null, 2),
+  //   text: JSON.stringify({fallBackURL}),
+	// 	runAs: "APP",
+	// });
 	await pinned.distinguish(true); // sticky mod comment (maps to PRAW distinguish(True))
 	return {'test': 'test'}
 }
