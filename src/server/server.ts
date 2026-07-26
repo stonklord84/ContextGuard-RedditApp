@@ -1,6 +1,7 @@
 import {once} from 'node:events'
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {context, reddit} from '@devvit/web/server'
+import { settings } from "@devvit/web/server";
 import {T3} from '@devvit/shared-types/tid.js'
 
 import type {
@@ -140,10 +141,81 @@ async function onPostSubmit(reqMsg: IncomingMessage): Promise<TriggerResponse> {
   }
   console.log(postMetaInfo.secureMedia, 'this is the secure media info, hopefully not undefined....')
   const fallBackURL = postMetaInfo.secureMedia?.redditVideo?.fallbackUrl
+  const dashUrl = postMetaInfo.secureMedia?.redditVideo?.dashUrl
+  console.log(fallBackURL, 'this is the fallback url')
+
+  // Reddit stores video and audio as separate files under the same v.redd.it
+  // base path. The DASH manifest (dashUrl) lists the real audio filename, so
+  // we parse it instead of guessing (the naming has changed across Reddit's
+  // encoding versions, e.g. CMAF_AUDIO_64.mp4 vs CMAF_AUDIO_128.mp4).
+  function getBaseDir(url: string): string {
+    const noQuery = url.split('?')[0] ?? url
+    return noQuery.substring(0, noQuery.lastIndexOf('/') + 1)
+  }
+
+  async function getAudioUrl(dashManifestUrl: string): Promise<string | undefined> {
+    const mpdRes = await fetch(dashManifestUrl)
+    const mpdText = await mpdRes.text()
+    const audioSetMatch = mpdText.match(/<AdaptationSet[^>]*contentType="audio"[^>]*>([\s\S]*?)<\/AdaptationSet>/)
+    if (!audioSetMatch || !audioSetMatch[1]) return undefined
+    const baseUrlMatches = [...audioSetMatch[1].matchAll(/<BaseURL>(.*?)<\/BaseURL>/g)]
+    if (!baseUrlMatches.length) return undefined
+    // last representation listed is the highest-bandwidth one (best quality)
+    const audioFileName = baseUrlMatches[baseUrlMatches.length - 1]?.[1]
+    if (!audioFileName) return undefined
+    return getBaseDir(dashManifestUrl) + audioFileName
+  }
+
+  async function fetchAsBase64(url: string): Promise<string> {
+    const res = await fetch(url)
+    const buf = await res.arrayBuffer()
+    return Buffer.from(buf).toString('base64')
+  }
+
+  function buildGeminibody(prompt: string, videoBase64: string, audioBase64?: string){
+    const parts: any[] = [
+      { text: prompt },
+      { inlineData: { mimeType: 'video/mp4', data: videoBase64 } },
+    ]
+    if (audioBase64) {
+      parts.push({ inlineData: { mimeType: 'audio/mp4', data: audioBase64 } })
+    }
+    return JSON.stringify({
+      contents: [{ parts }]
+    })
+  }
+
+  if (!fallBackURL || !dashUrl) throw new Error('missing video urls')
+
+  const audioUrl = await getAudioUrl(dashUrl)
+  console.log(audioUrl, 'this is the extracted audio url')
+
+  const videoBase64 = await fetchAsBase64(fallBackURL)
+  const audioBase64 = audioUrl ? await fetchAsBase64(audioUrl) : undefined
+
+  const apiKey = await settings.get("apiKey")
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: buildGeminibody(
+      'The first file is a silent video clip. The second file (if present) is its separate audio track. Treat them as the same clip playing together, and use it for research, following this process: First, grab the tiktok handle from the video. Then, search the web to get background information on that tiktok account. Do all that in the first paragraph. Then,Search the web to find the real-world context behind what is  shown in this video — who is involved, what event or claim it relates to, and any important background a viewer should know regarding the specific contents of this video. If this is just entertainment/lifestyle content with nothing specific to verify, say so plainly instead of guessing. Put that in the second paragraph.',
+      videoBase64,
+      audioBase64,
+    )
+  })
+
+  const res = await response.json() as any
+  let geminiResponse = 'Default response'
+  if (res.candidates?.length){
+    geminiResponse = res.candidates?.[0].content?.parts?.[0]?.text
+  }
+  else{
+    console.log('genai is having a stroke')
+  }
 
   const pinned = await reddit.submitComment({
     id: postId,
-    text: JSON.stringify({fallBackURL}),
+    text: geminiResponse,
     runAs: 'APP',
   })
 

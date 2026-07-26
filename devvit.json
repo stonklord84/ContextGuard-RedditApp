@@ -16,7 +16,9 @@
     "http": {
       "enable": true,
       "domains": [
-        "contextguard-one.vercel.app"
+        "contextguard-one.vercel.app",
+        "generativelanguage.googleapis.com",
+        "v.redd.it"
       ]
     }
   },
@@ -36,5 +38,14 @@
   },
   "scripts": {
     "dev": "npm run watch"
+  },
+  "settings": {
+    "global": {
+      "apiKey": {
+        "type": "string",
+        "label": "Gemini API Key",
+        "isSecret": true
+      }
+    }
   }
 }
